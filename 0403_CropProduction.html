@@ -1,0 +1,413 @@
+﻿
+<!doctype html>
+<html>
+<!--
+  Created using jsbin.com
+  Source can be edited via http://jsbin.com/ILAYUNeK/1/edit
+-->
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+    <title></title>
+    <link rel="stylesheet" type="text/css" href="css/urbano.css">
+    <link rel="stylesheet" href="css/followingballs.css"> 
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/dojo/dijit/themes/tundra/tundra.css"> 
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/esri/css/esri.css">
+
+    <style>
+      html, body { height: 100%; width: 100%; margin: 0; padding: 0; }
+      #map{ margin: 0; padding: 0}
+      #feedback {
+        position: absolute;
+        /*height: 250px;*/
+        /*font-family: arial;*/
+        font-family: 'PT Sans', sans-serif;
+        margin: 5px;
+        padding: 4px;
+        z-index: 40;
+        background: #fff;
+        color: #444;
+        width: 200px;
+        left: 5px;
+        top: 5px;
+        -moz-box-shadow: 0 0 5px #888;
+        -webkit-box-shadow: 0 0 5px #888;
+        box-shadow: 0 0 5px #888;
+        font-size: 75%;
+        }
+
+      #county { 
+        padding: 5px 0 0 0;
+        font-weight: 700;
+      }
+      #legendWrapper { padding: 0 0 0 0; }
+      #fieldWrapper { font-family: Verdana, sans-serif; font-size: 75%;  }
+      #note { font-size: 80%; font-weight: 700; padding: 0 0 10px 0; }
+      h3 { margin: 0 0 5px 0; border-bottom: 1px solid #444; }
+      #HomeButton {
+            position: absolute;
+            top: 95px;
+            right: 20px;
+            z-index: 50;
+      }
+    </style>
+
+    <script src="http://js.arcgis.com/3.7/"></script>
+
+    <script>
+        
+        
+        
+        // one global for persistent app variables
+        var app = {};
+        require([
+          "esri/map", "esri/layers/WMSLayer", "esri/layers/WMSLayerInfo", "esri/layers/WebTiledLayer", 
+          "esri/layers/FeatureLayer", "esri/SpatialReference", "esri/tasks/GeometryService", "esri/tasks/ProjectParameters",
+          "esri/geometry/Extent", "esri/renderers/SimpleRenderer",
+          "esri/tasks/GenerateRendererParameters", "esri/tasks/GenerateRendererTask", "esri/dijit/InfoWindow",
+          "esri/dijit/Popup", "esri/dijit/HomeButton", 
+          "esri/dijit/Legend", "esri/dijit/PopupTemplate", 
+          "dojo/parser", "dojo/_base/array", "dojo/_base/Color", "esri/symbols/TextSymbol", "esri/layers/LabelLayer",
+          "dojo/dom", "dojo/dom-construct", "dojo/number",
+          "dojo/data/ItemFileReadStore", "dijit/form/FilteringSelect", "dijit/TitlePane",
+          "dijit/layout/BorderContainer", "dijit/layout/ContentPane",
+          "dojo/domReady!"
+        ], function (
+          Map, WMSLayer, WMSLayerInfo, WebTiledLayer,
+          FeatureLayer, SpatialReference, GeometryService, ProjectParameters,
+          Extent, SimpleRenderer,
+          GenerateRendererParameters, GenerateRendererTask, InfoWindow,
+          Popup, HomeButton, 
+          Legend, PopupTemplate, 
+          parser, arrayUtils, Color, TextSymbol, LabelLayer,
+          dom, domConstruct, number,
+          ItemFileReadStore, FilteringSelect, TitlePane
+        ) {
+            parser.parse();
+
+            var loading = dojo.byId("followingBallsG");
+            esri.hide(loading);
+          
+            //set the inition map extent.  user can zoom out if desired
+            var bounds = new Extent({
+                "xmin": -9457529,
+                "ymin": 4192455,
+                "xmax": -9248092,
+                "ymax": 4360617,
+                "spatialReference": { "wkid": 102100 } //
+            });
+            
+            //define the level of details (zoom scales) for the map.  Unlike most other indicator maps
+            //this map would allow a "rubber band" (ctrl + drag box) zoom that would land at a scale
+            //that doesn't match any tile layers.  The probable cause was not having a tile layer as the
+            //bottom most layer.  This LOD variable sets the allowable zoom scales
+            var myLOD = [{ "level": 4, "resolution": 9783.93962049996, "scale": 36978595.474472 },
+                {"level" : 5, "resolution" : 4891.96981024998, "scale" : 18489297.737236}, 
+                {"level" : 6, "resolution" : 2445.98490512499, "scale" : 9244648.868618}, 
+                {"level" : 7, "resolution" : 1222.99245256249, "scale" : 4622324.434309}, 
+                {"level" : 8, "resolution" : 611.49622628138, "scale" : 2311162.217155}, 
+                {"level" : 9, "resolution" : 305.748113140558, "scale" : 1155581.108577}, 
+                {"level" : 10, "resolution" : 152.874056570411, "scale" : 577790.554289}, 
+                {"level" : 11, "resolution" : 76.4370282850732, "scale" : 288895.277144}, 
+                {"level" : 12, "resolution" : 38.2185141425366, "scale" : 144447.638572}, 
+                {"level" : 13, "resolution" : 19.1092570712683, "scale" : 72223.819286}, 
+                {"level" : 14, "resolution" : 9.55462853563415, "scale" : 36111.909643}, 
+                {"level" : 15, "resolution" : 4.77731426794937, "scale" : 18055.954822}, 
+                {"level" : 16, "resolution" : 2.38865713397468, "scale" : 9027.977411}, 
+                {"level" : 17, "resolution" : 1.19432856685505, "scale" : 4513.988705}, 
+                {"level" : 18, "resolution" : 0.597164283559817, "scale" : 2256.994353}, 
+                {"level" : 19, "resolution" : 0.298582141647617, "scale" : 1128.497176}]
+
+            app.hideLabelsThreshold = 300000;
+            app.currentYear = "2015"; //needed for the raster query sent to CropScape
+
+            app.popup = Popup({
+                titleInBody: false
+            }, domConstruct.create("div"));
+
+            app.map = new Map("map", {
+                extent: bounds,
+                slider: true,
+                sliderPosition: "top-right", //this is the plus and minus buttons - not an actual slider control 
+                logo: false, //hide the ESRI logo from the bottom right corner of the map
+                infoWindow: app.popup,
+                lods: myLOD
+            });
+
+            var home = new HomeButton({
+                map: app.map
+            }, "HomeButton");
+            //home.extent = bounds;
+            home.startup();
+
+            
+
+            //set the initial max allowable offset for the layers -- this performs Douglas Peucker algorithm (reduce verticies)
+            var initOffSet;
+            initOffset = maxOffset();
+            console.log("initOffSet: ", initOffset);
+
+            app.outFields = ["NAME"]
+            // create the counties OUTLINES feature layer 
+            app.countiesUrl = "https://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Population_Indicators/FeatureServer/0";
+            app.countyOutlines = new FeatureLayer(app.countiesUrl, {
+                "id": "countyOutlines",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields//,
+                //"minScale": app.layerChangeThreshold,
+            });
+            app.countyOutlines.setMaxAllowableOffset(initOffset); // set max allowable offset
+            var outline = new esri.symbol.SimpleLineSymbol()
+                  .setColor(dojo.Color(0, 0, 0))
+                  .setWidth(3);
+                    
+            app.sym = new esri.symbol.SimpleFillSymbol()
+                  .setOutline(outline)
+                  .setColor(dojo.Color(0, 0, 0, 0));
+            var outlineRenderer = new esri.renderer.SimpleRenderer(app.sym);
+            app.countyOutlines.setRenderer(outlineRenderer);
+            app.countyOutlines.disableMouseEvents();
+
+
+            //add MapBox layer.
+            var mbSubdomains = ["a", "b", "c"];
+            app.mapBox = new WebTiledLayer("http://${subDomain}.tiles.mapbox.com/v4/knoxmpc.h9a6o9lg/{level}/{col}/{row}.png?access_token=<enter your MapBox Key>", {
+                "subDomains": mbSubdomains,
+                "id": "toner-lines",
+                //"maxScale": app.layerChangeThreshold,
+            });
+
+
+            //add county labels
+            // create a text symbol to define the style of labels
+            var cntyLabel = new TextSymbol().setColor([255, 255, 255]);
+            cntyLabel.font.setSize("15pt");
+            cntyLabel.font.setFamily("Verdana");
+            cntyLabel.font.setWeight(cntyLabel.WEIGHT_BOLD);
+            cntyLabelRenderer = new SimpleRenderer(cntyLabel);
+            var labels = new LabelLayer({id: "labels", maxScale: app.hideLabelsThreshold});
+            // tell the label layer to label the countries feature layer 
+            var labelField = "NAME";
+            labels.addFeatureLayer(app.countyOutlines, cntyLabelRenderer, "${" + labelField + "}");
+             //add the label layer to the map in the next block
+
+            //add label shadow
+            var shadowLabel = new TextSymbol().setColor([0, 0, 0]);
+            shadowLabel.setOffset(1, -1);
+            shadowLabel.font.setSize("15pt");
+            shadowLabel.font.setFamily("Verdana");
+            shadowLabel.font.setWeight(shadowLabel.WEIGHT_BOLD);
+            shadowLabelRenderer = new SimpleRenderer(shadowLabel);
+            var shadowLabels = new LabelLayer({ id: "shadowLabels", maxScale: app.hideLabelsThreshold });
+            // tell the label layer to label the countries feature layer 
+            // using the field named "admin"
+            shadowLabels.addFeatureLayer(app.countyOutlines, shadowLabelRenderer, "${" + labelField + "}"); 
+
+
+            var wmsURL = "https://nassgeodata.gmu.edu/cgi-bin/wms_cdl_tn.cgi";
+            var CDL2015 = new WMSLayerInfo({ name: "cdl_2015_tn", title: "2015" });
+            var CDL2014 = new WMSLayerInfo({ name: "cdl_2014_tn", title: "2014" });
+            var CDL2013 = new WMSLayerInfo({ name: "cdl_2013_tn", title: "2013" });
+            var CDL2012 = new WMSLayerInfo({ name: "cdl_2012_tn", title: "2012" });
+            var CDL2011 = new WMSLayerInfo({ name: "cdl_2011_tn", title: "2011" });
+            var CDL2010 = new WMSLayerInfo({ name: "cdl_2010_tn", title: "2010" });
+            var CDL2009 = new WMSLayerInfo({ name: "cdl_2009_tn", title: "2009" });
+            var CDL2008 = new WMSLayerInfo({ name: "cdl_2008_tn", title: "2008" });
+
+            var resourceInfo = {
+                extent: bounds,
+                layerInfos: [CDL2015, CDL2014, CDL2013, CDL2012, CDL2011, CDL2010, CDL2009, CDL2008]
+            };
+
+            var wmsLayer = new WMSLayer(wmsURL, {
+                resourceInfo: resourceInfo,
+                visibleLayers: ['cdl_2015_tn'],
+                //spatialReference: new SpatialReference({ wkid: 3857 })
+            });
+            wmsLayer.spatialReference = new SpatialReference({ wkid: 102100 });
+            
+            app.map.addLayer(wmsLayer);
+            app.map.addLayer(app.mapBox);
+
+           
+            app.map.addLayer(shadowLabels);
+            app.map.addLayer(labels);
+            app.map.addLayer(app.countyOutlines);
+            
+            //add map zoom end - updates the Max Off Set
+            //app.map.on("zoom-end", ScaleChanged);
+
+            app.clLayers = {
+                "cdl_2015_tn": "2015",
+                "cdl_2014_tn": "2014",
+                "cdl_2013_tn": "2013",
+                "cdl_2012_tn": "2012",
+                "cdl_2011_tn": "2011",
+                "cdl_2010_tn": "2010",
+                "cdl_2009_tn": "2009",
+                "cdl_2008_tn": "2008"
+            };
+
+            app.clLayersList = ["cdl_2015_tn", "cdl_2014_tn", "cdl_2013_tn","cdl_2012_tn","cdl_2011_tn", "cdl_2010_tn", "cdl_2009_tn", "cdl_2008_tn"];
+            // create a store and a filtering select for the CDL layers 
+            var CDLlayerNames, CDLlayerStore, CDLfieldSelect;
+            CDLlayerNames = { "identifier": "value", "label": "name", "items": [] };
+            arrayUtils.forEach(app.clLayersList, function (f) {
+                    console.log("adding", app.clLayers[f]);
+                    CDLlayerNames.items.push({ "name": app.clLayers[f], "value": f });
+            });
+
+            CDLlayerStore = new ItemFileReadStore({ data: CDLlayerNames });
+            CDLfieldSelect = new FilteringSelect({
+                displayedValue: CDLlayerNames.items[0].name,
+                value: CDLlayerNames.items[0].value,
+                name: "fieldsFS",
+                required: false,
+                store: CDLlayerStore,
+                searchAttr: "name",
+                // this sets the style for 'title' of the drop down box, but not the invidiual items when clicked on
+                style: { "width": "170px", "fontSize": "8pt", "color": "#444" }
+            }, domConstruct.create("div", null, dom.byId("fieldWrapper")));
+            CDLfieldSelect.on("change", updateLayer);
+
+            function updateLayer(ch) {
+                //loading.visibility = 'visible';
+                esri.show(loading);
+                app.map.infoWindow.hide();
+                app.currentLayer = ch;
+                app.currentYear = app.clLayers[ch];
+                wmsLayer.setVisibleLayers(app.currentLayer);
+            }
+
+   
+            function updateMaxOffset() {
+                var offset = maxOffset();
+                if (app.currentLayer == "counties") {
+                    app.counties.setMaxAllowableOffset(offset);
+                    console.log("counties.maxAllow: ", app.counties.getMaxAllowableOffset());
+                } else {
+                    app.tracts.setMaxAllowableOffset(offset);
+                    console.log("tracts.maxAllow: ", app.tracts.getMaxAllowableOffset());
+                }
+            }
+
+            function maxOffset() {
+                var extentWidth;
+                extentWidth = app.map.extent.getWidth();
+                myOffset = extentWidth / app.map.width;
+                myOffset = myOffset / 1;
+                return myOffset;
+            }
+
+            app.mapEnd = app.map.on("update-end", function (evt) {
+                esri.hide(loading);
+                //alert("updates end");
+            });
+
+            function errorHandler(err) {
+                console.log('Oops, error: ', err);
+            }
+
+            //set up reproject coordinates from map click 
+            gsvc = new GeometryService("http://tasks.arcgisonline.com/ArcGIS/rest/services/Geometry/GeometryServer");
+            var baseURL = "http://nassgeodata.gmu.edu:8080/axis2/services/CDLService/GetCDLValue?year=";
+            app.mapClick = app.map.on("click", createCSPopup);
+
+            function createCSPopup(evt) {
+                
+                var clickPoint = evt.mapPoint;
+                var outSR = new SpatialReference(102039);
+                var params = new ProjectParameters();
+                params.geometries = [clickPoint];
+                params.outSR = outSR;
+
+                //perform the actual reprojection
+                gsvc.project(params, function (projectedPoints) {
+                    outPt = projectedPoints[0]; //reprojected point
+                    //set up the php query to CropScape
+                    //NOTE:  If you get results in the pop up that starts with "PHP Warni", then you have to:
+                    // 1) open C:\php\php.ini
+                    // 2) Search for "open_basedir ="
+                    // 3) Change it to the path where the cdl.php file lives, which is currently "N:\MPCprojects\InfoServ\IndicatorsWebsite\Indicators\JavaScriptMapViewer\ET_Index_Maps\ET_Index_Maps"
+                    // ALSO NOTE: This could be a problem with the local php program.  This happened in May 2016.  I copied this html file to the 
+                    // webserver and it worked fine.  Try that
+                    var phpQuery = "cdl.php?x=" + outPt.x + "&y=" + outPt.y + "&year=" + app.currentYear;
+                    var csResponse = httpGet(phpQuery); // send the request to CropScape via cdl.php
+                    //parse the string returned by cropscape to get color and category
+                    var categoryStart = csResponse.indexOf("category");
+                    var colorStart = csResponse.indexOf(", color: ");
+                    var CDLcategory = csResponse.substring(categoryStart + 11, colorStart -1);
+                    var colorEnd = csResponse.indexOf("}</Result>");
+                    var CDLcolor = csResponse.substring(colorStart + 11, colorEnd - 1);
+                    formatInfoWindow(evt, CDLcategory, CDLcolor);
+                });
+            }
+
+
+            function formatInfoWindow(evt, CDLcategory, CDLcolor ) {
+               
+                var content = CDLcategory;
+                
+                app.popup.setTitle("CropScape " + app.currentYear);
+                app.popup.setContent(content);
+                // show info window at correct location based on the event's properties
+                (evt) ? app.popup.show(evt.screenPoint, app.map.getInfoWindowAnchor(evt.screenPoint)) : null;
+            }
+
+            function httpGet(theUrl) {
+                //see note the createCSPopup function above if you're getting errors along the lines of:
+                // "open_basedir restriction in effect"
+
+                var xmlHttp = null;
+
+                xmlHttp = new XMLHttpRequest();
+                xmlHttp.open("GET", theUrl, false);
+                xmlHttp.send(null);
+                return xmlHttp.responseText;
+            }
+        });
+    </script>
+  
+<!--<style id="jsbin-css"> -->
+
+<!--</style>-->
+</head>
+  <body class="tundra">
+    <div data-dojo-type="dijit.layout.BorderContainer"
+         data-dojo-props="design:'headline',gutters:false"
+         style="width: 685px; height: 550px; margin: 0;">
+      <div id="map"
+           data-dojo-type="dijit.layout.ContentPane"
+           data-dojo-props="region:'center'">
+
+        
+
+        <div id="followingBallsG" style="position:absolute; right:240px; top:225px; z-index:100; ">
+        <div id="followingBallsG_1" class="followingBallsG">
+        </div>
+        <div id="followingBallsG_2" class="followingBallsG">
+        </div>
+        <div id="followingBallsG_3" class="followingBallsG">
+        </div>
+        <div id="followingBallsG_4" class="followingBallsG">
+        </div>
+        </div> 
+          
+        <div style="width: 200px">
+        <div id="feedback" style="width:200" data-dojo-type="dijit/TitlePane" data-dojo-props="title: 'Choose Crop Scape Year'" open="false">
+          <!-- <h3>Choose Demographic Variable</h3> -->
+
+            <div id="fieldWrapper" style ="font-size: 75%; font-family: 'Verdana', sans-serif" >
+          <!--Currently selected attribute: -->
+          </div>
+
+          <div id="legendWrapper" style ="font-size: 75%; font-family: 'Verdana', sans-serif"></div>
+        </div>
+        </div>
+          <div id="HomeButton"></div>
+      </div>
+    </div>
+    <div class="clickmap">Click map to view data</div>
+
+</body>
+</html>

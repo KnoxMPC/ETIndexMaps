@@ -1,0 +1,463 @@
+﻿
+<!doctype html>
+<html>
+
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+    <title></title>
+
+    <link rel="stylesheet" type="text/css" href="css/urbano.css">
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/dojo/dijit/themes/tundra/tundra.css"> 
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/esri/css/esri.css">
+
+
+
+    <style>
+      html, body { height: 100%; width: 100%; margin: 0; padding: 0; }
+      #map{ margin: 0; padding: 0}
+      #feedback {
+        position: absolute;
+        /*height: 250px;*/
+        font-family: Verdana;
+        /*font-family: 'PT Sans', sans-serif;*/
+        margin: 5px;
+        padding: 4px;
+        z-index: 40;
+        background: #fff;
+        color: #444;
+        width: 200px;
+        left: 5px;
+        top: 5px;
+        -moz-box-shadow: 0 0 5px #888;
+        -webkit-box-shadow: 0 0 5px #888;
+        box-shadow: 0 0 5px #888;
+        font-size: 75%;
+        }
+
+      #county { 
+        padding: 5px 0 0 0;
+        font-weight: 700;
+      }
+      #legendWrapper { padding: 0 0 0 0; }
+      #fieldWrapper { font-family: Verdana, sans-serif; font-size: 75%;  }
+      #note { font-size: 80%; font-weight: 700; padding: 0 0 10px 0; }
+      h3 { margin: 0 0 5px 0; border-bottom: 1px solid #444; }
+      #HomeButton {
+            position: absolute;
+            top: 95px;
+            right: 20px;
+            z-index: 50;
+      }
+    </style>
+
+    <script src="http://js.arcgis.com/3.7/"></script>
+
+    <script>
+           
+        // one global for persistent app variables
+        var app = {};
+        require([
+          "esri/map", "esri/layers/WMSLayer", "esri/layers/WebTiledLayer", 
+          "esri/layers/FeatureLayer", "esri/SpatialReference", 
+          "esri/geometry/Extent", "esri/renderers/SimpleRenderer",
+          "esri/dijit/InfoWindow",
+          "esri/dijit/Popup", "esri/dijit/HomeButton", 
+          "esri/dijit/Legend", "esri/dijit/PopupTemplate", 
+          "dojo/parser", "dojo/_base/array", "dojo/_base/Color", "esri/symbols/TextSymbol", "esri/layers/LabelLayer",
+          "dojo/dom", "dojo/dom-construct", "dojo/number",
+          "dojo/data/ItemFileReadStore", "dijit/form/FilteringSelect", "dijit/TitlePane",
+          "dijit/layout/BorderContainer", "dijit/layout/ContentPane",
+          "dojo/domReady!"
+        ], function (
+          Map, WMSLayer, WebTiledLayer,
+          FeatureLayer, SpatialReference, 
+          Extent, SimpleRenderer,
+          InfoWindow,
+          Popup, HomeButton, 
+          Legend, PopupTemplate, 
+          parser, arrayUtils, Color, TextSymbol, LabelLayer,
+          dom, domConstruct, number,
+          ItemFileReadStore, FilteringSelect, TitlePane
+        ) {
+            parser.parse();
+
+          
+            //set the inition map extent.  user can zoom out if desired
+            var bounds = new Extent({
+                "xmin": -9457529,
+                "ymin": 4192455,
+                "xmax": -9248092,
+                "ymax": 4360617,
+                "spatialReference": { "wkid": 102100 } //
+            });
+            
+            app.hideCountyLabelsThreshold = 300000; // hide county labels when zoomed in farther than 1:300K
+            app.currentYear = "2012"; //needed for the raster query sent to CropScape
+            app.notAssessedThreshold = 300000;
+
+            app.popup = Popup({
+                titleInBody: false
+            }, domConstruct.create("div"));
+
+            app.map = new Map("map", {
+                extent: bounds,
+                slider: true,
+                sliderPosition: "top-right", //this is the plus and minus buttons - not an actual slider control 
+                logo: false, //hide the ESRI logo from the bottom right corner of the map
+                infoWindow: app.popup
+            });
+
+            var home = new HomeButton({
+                map: app.map
+            }, "HomeButton");
+            home.startup();
+
+            
+            //set the initial max allowable offset for the layers -- this performs Douglas Peucker algorithm (reduce verticies)
+            var initOffSet;
+            initOffset = maxOffset();
+            console.log("initOffSet: ", initOffset);
+
+            app.outFields = ["WATER_NAME", "ATTAINMENT"];
+            app.countyFields = ["NAME"];
+            // create the counties OUTLINES feature layer 
+            app.countiesUrl = "https://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Population_Indicators/FeatureServer/0";
+            app.countyOutlines = new FeatureLayer(app.countiesUrl, {
+                "id": "countyOutlines",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.countyFields//,
+                //"minScale": app.layerChangeThreshold,
+            });
+
+
+            //county outlines
+            app.countyOutlines.setMaxAllowableOffset(initOffset); // set max allowable offset
+            var outline = new esri.symbol.SimpleLineSymbol()
+                  .setColor(dojo.Color(0, 0, 0))
+                  .setWidth(3);
+                  //.setColor(dojo.colorFromHex("#fff"));
+            app.sym = new esri.symbol.SimpleFillSymbol()
+                  .setOutline(outline)
+                  .setColor(dojo.Color(0, 0, 0, 0));
+            var outlineRenderer = new esri.renderer.SimpleRenderer(app.sym);
+            app.countyOutlines.setRenderer(outlineRenderer);
+            app.countyOutlines.disableMouseEvents();
+
+            //mapbox topo
+            //the commented out line below is for the version 3 MB api. The v4 versions was added on 2/9/2015
+            var mbSubdomains = ["a", "b", "c"];
+            app.mapBoxTopo = new WebTiledLayer("http://${subDomain}.tiles.mapbox.com/v4/knoxmpc.h9a59hm0/{level}/{col}/{row}.png?access_token=<enter your MapBox key>", {
+                "subDomains": mbSubdomains,
+                "id": "mapBoxTopo",
+                //"maxScale": app.layerChangeThreshold,
+            });
+
+
+            // create the streams 2012 layers feature layer 
+            app.streams2012 = new FeatureLayer("http://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Water_Quality_Indicators2/FeatureServer/1", {
+                "id": "Streams2012",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields,
+                "showAttribution": false
+            });
+            app.streams2012.setMaxAllowableOffset(initOffset); // set max allowable offset
+            app.streams2012.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'"); //hide streams not assessed
+            app.currentTDEClayer = app.streams2012;
+
+            // create the streams 2010 layers feature layer 
+            app.streams2010 = new FeatureLayer("http://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Water_Quality_Indicators2/FeatureServer/2", {
+                "id": "Streams2010",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields,
+                "showAttribution": false,
+                "visible": false
+            });
+            app.streams2010.setMaxAllowableOffset(initOffset); // set max allowable offset
+            app.streams2010.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+
+            // create the streams 2008 layers feature layer 
+            app.streams2008 = new FeatureLayer("http://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Water_Quality_Indicators2/FeatureServer/3", {
+                "id": "Streams2008",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields,
+                "showAttribution": false,
+                "visible": false
+            });
+            app.streams2008.setMaxAllowableOffset(initOffset); // set max allowable offset
+            app.streams2008.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+
+
+            // create the streams 2006 layers feature layer 
+            app.streams2006 = new FeatureLayer("http://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Water_Quality_Indicators2/FeatureServer/4", {
+                "id": "Streams2006",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields,
+                "showAttribution": false,
+                "visible": false
+            });
+            app.streams2006.setMaxAllowableOffset(initOffset); // set max allowable offset
+            app.streams2006.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+
+            // create the streams 2004 layers feature layer 
+            app.streams2004 = new FeatureLayer("http://services2.arcgis.com/Gypl21NmiWS1cM7h/arcgis/rest/services/Water_Quality_Indicators2/FeatureServer/5", {
+                "id": "Streams2004",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": app.outFields,
+                "showAttribution": false,
+                "visible": false
+            });
+            app.streams2004.setMaxAllowableOffset(initOffset); // set max allowable offset
+            app.streams2004.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+
+
+            //add county labels
+            // create a text symbol to define the style of labels
+            var cntyLabel = new TextSymbol().setColor([255, 255, 255]);
+            cntyLabel.font.setSize("15pt");
+            cntyLabel.font.setFamily("Verdana");
+            cntyLabel.font.setWeight(cntyLabel.WEIGHT_BOLD);
+            cntyLabelRenderer = new SimpleRenderer(cntyLabel);
+            var labels = new LabelLayer({ id: "labels", maxScale: app.hideCountyLabelsThreshold });
+            // tell the label layer to label the countries feature layer 
+            var labelField = "NAME";
+            labels.addFeatureLayer(app.countyOutlines, cntyLabelRenderer, "${" + labelField + "}");
+             //add the label layer to the map in the next block
+
+            //add label shadow
+            var shadowLabel = new TextSymbol().setColor([0, 0, 0]);
+            shadowLabel.setOffset(1, -1);
+            shadowLabel.font.setSize("15pt");
+            shadowLabel.font.setFamily("Verdana");
+            shadowLabel.font.setWeight(shadowLabel.WEIGHT_BOLD);
+            shadowLabelRenderer = new SimpleRenderer(shadowLabel);
+            var shadowLabels = new LabelLayer({ id: "shadowLabels", maxScale: app.hideCountyLabelsThreshold });
+            // tell the label layer to label the countries feature layer 
+            // using the field named "admin"
+            var labelField = "NAME";
+            shadowLabels.addFeatureLayer(app.countyOutlines, shadowLabelRenderer, "${" + labelField + "}"); 
+
+            //setup stream labels
+            var streamLabel = new TextSymbol().setColor([255, 255, 255]);
+            streamLabel.font.setSize("8pt");
+            streamLabel.font.setFamily("arial");
+            streamLabelRenderer = new SimpleRenderer(streamLabel);
+            var streamLabels = new LabelLayer({ "id": "streamLabels", "maxScale": 20000});
+            var streamLabelField = "WATER_NAME";
+            streamLabels.addFeatureLayer(app.streams2012, streamLabelRenderer, "${" + streamLabelField + "}"); 
+
+            app.map.addLayer(app.mapBoxTopo);
+            app.map.addLayer(app.streams2004);
+            app.map.addLayer(app.streams2006);
+            app.map.addLayer(app.streams2008);
+            app.map.addLayer(app.streams2010);
+            app.map.addLayer(app.streams2012);
+            //app.map.addLayer(app.streamLabels);
+            app.map.addLayer(shadowLabels);
+            app.map.addLayer(labels);
+            app.map.addLayer(app.countyOutlines);
+            
+            //Initialized the legend on first load
+            createLegend(app.map, app.streams2012);
+
+            //add map zoom end - updates the Max Off Set
+            //app.map.on("zoom-end", ScaleChanged);
+
+            app.tdecLayers = {
+                "Streams2012": "2012",
+                "Streams2010": "2010",
+                "Streams2008": "2008",
+                "Streams2006": "2006",
+                "Streams2004": "2004"
+            };
+
+            app.tdecLayersList = ["Streams2012", "Streams2010", "Streams2008", "Streams2006", "Streams2004"];
+            // create a store and a filtering select for the CDL layers 
+            var tdeclayerNames, tdecLayerStore, tdecFieldSelect;
+            tdeclayerNames = { "identifier": "value", "label": "name", "items": [] };
+            arrayUtils.forEach(app.tdecLayersList, function (f) {
+                    console.log("adding", app.tdecLayers[f]);
+                    tdeclayerNames.items.push({ "name": app.tdecLayers[f], "value": f });
+            });
+
+            tdecLayerStore = new ItemFileReadStore({ data: tdeclayerNames });
+            tdecFieldSelect = new FilteringSelect({
+                displayedValue: tdeclayerNames.items[0].name,
+                value: tdeclayerNames.items[0].value,
+                name: "fieldsFS",
+                required: false,
+                store: tdecLayerStore,
+                searchAttr: "name",
+                // this sets the style for 'title' of the drop down box, but not the invidiual items when clicked on
+                style: { "width": "170px", "fontSize": "8pt", "color": "#444" }
+            }, domConstruct.create("div", null, dom.byId("fieldWrapper")));
+            tdecFieldSelect.on("change", updateLayer);
+
+            function updateLayer(ch) {
+
+                app.map.infoWindow.hide();
+                app.currentLayer = ch;
+                app.currentYear = app.tdecLayers[ch];
+                //wmsLayer.setVisibleLayers(app.currentLayer);
+                setVisibleLayers(ch);
+            }
+
+            function updateMaxOffset(inLayer) {
+                var offset = maxOffset();
+                inLayer.setMaxAllowableOffset(offset);
+
+            }
+
+            function maxOffset() {
+                var extentWidth;
+                extentWidth = app.map.extent.getWidth();
+                myOffset = extentWidth / app.map.width;
+                myOffset = myOffset / 3;
+                return myOffset;
+            }
+
+            /*app.mapEnd = app.map.on("update-end", function (evt) {
+                esri.hide(loading);
+                //alert("updates end");
+            });*/
+
+            function errorHandler(err) {
+                console.log('Oops, error: ', err);
+            }
+
+            //add map zoom end - updates the Max Off Set
+            app.map.on("zoom-end", ScaleChanged);
+
+            function ScaleChanged() {
+                //turn off/on 'not assessed' streams
+                var currentScale = app.map.getScale();
+                if (currentScale < app.notAssessedThreshold) {
+                    app.streams2012.setDefinitionExpression(null);
+                    app.streams2010.setDefinitionExpression(null);
+                    app.streams2008.setDefinitionExpression(null);
+                    app.streams2006.setDefinitionExpression(null);
+                    app.streams2004.setDefinitionExpression(null);
+                } else {
+                    app.streams2012.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+                    app.streams2010.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+                    app.streams2008.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+                    app.streams2006.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+                    app.streams2004.setDefinitionExpression("ATTAINMENT <> 'Not Assessed'");
+
+                }
+                
+                //apply max offset to layer
+                var offset = maxOffset();
+                app.currentTDEClayer.setMaxAllowableOffset(offset);
+            }
+
+            function setVisibleLayers(layerID) {
+                //make the layerID the only visible graphics (feature) layer
+                for (var j = 0; j < app.map.graphicsLayerIds.length; j++) {
+                    var layer = app.map.getLayer(app.map.graphicsLayerIds[j]);
+                    var stringLayer = layer.id;
+                    var num = stringLayer.indexOf("Stream");
+                    if (stringLayer.indexOf("Stream") > -1) {
+                        if (layer.id == layerID) {
+                            layer.setVisibility(true);
+                            app.currentTDEClayer = layer;
+                        } else {
+                            layer.setVisibility(false);
+                        }
+                    }
+                }
+                createLegend(app.map, app.currentTDEClayer);
+                var offset = maxOffset();
+                app.currentTDEClayer.setMaxAllowableOffset(offset);
+            }
+
+
+            function createLegend(map, fl) {
+                // destroy previous legend, if present
+                if (app.hasOwnProperty("legend")) {
+                    app.legend.destroy();
+                    domConstruct.destroy(dom.byId("legendDiv"));
+                }
+                // create a new div for the legend
+                var legendDiv = domConstruct.create("div", {
+                    id: "legendDiv"
+                }, dom.byId("legendWrapper"));
+
+                app.legend = new Legend({
+                    map: map,
+                    layerInfos: [{
+                        layer: fl,
+                        title: app.currentYear + " TDEC 303(d) Assessment"
+                    }]
+                }, legendDiv);
+                app.legend.startup();
+            }
+
+            // show selected stream attribute on click
+            app.mapClick = app.streams2012.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+            // show selected stream attribute on click
+            app.mapClick = app.streams2010.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+            // show selected stream attribute on click
+            app.mapClick = app.streams2008.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+            // show selected stream attribute on click
+            app.mapClick = app.streams2006.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+            // show selected stream attribute on click
+            app.mapClick = app.streams2004.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+            
+
+            function formatInfoWindow(evt) {
+                var name = evt.graphic.attributes.WATER_NAME;
+                var assess = evt.graphic.attributes.ATTAINMENT
+                app.popup.setFeatures([evt.graphic]);
+                app.popup.setTitle(name);
+                app.popup.setContent("TDEC 303(d) Assessment: " + assess);
+
+                // show info window at correct location based on the event's properties
+                (evt) ? app.popup.show(evt.screenPoint, app.map.getInfoWindowAnchor(evt.screenPoint)) : null;
+            }
+
+
+
+        });
+    </script>
+  
+<!--<style id="jsbin-css"> -->
+
+<!--</style>-->
+</head>
+  <body class="tundra">
+    <div data-dojo-type="dijit.layout.BorderContainer"
+         data-dojo-props="design:'headline',gutters:false"
+         style="width: 685px; height: 550px; margin: 0;">
+      <div id="map"
+           data-dojo-type="dijit.layout.ContentPane"
+           data-dojo-props="region:'center'">
+          
+        <div style="width: 200px">
+        <div id="feedback" style="width:200" data-dojo-type="dijit/TitlePane" data-dojo-props="title: 'Change 303(d) Assessment Year'" open="false">
+          <!-- <h3>Choose Demographic Variable</h3> -->
+
+            <div id="fieldWrapper" style ="font-size: 100%; font-family: Verdana, sans-serif" >
+          <!--Currently selected attribute: -->
+          </div>
+
+          <div id="legendWrapper" style ="font-size: 100%; font-family: Verdana, sans-serif"></div>
+        </div>
+        </div>
+          <div id="HomeButton"></div>
+      </div>
+    </div>
+    <div class="clickmap">Click a stream for more information</div>
+
+</body>
+</html>

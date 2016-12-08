@@ -1,0 +1,565 @@
+﻿
+<!doctype html>
+<html>
+<!--
+  Created using jsbin.com
+  Source can be edited via http://jsbin.com/ILAYUNeK/1/edit
+
+  Here is an example URL to use when testing this page/code:  http://localhost:50755/map.html?map=0102_FamiliesAndHouseholds&attribute=PER_FAMILY
+  
+-->
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+    <title></title>
+    <link rel="stylesheet" type="text/css" href="css/urbano.css">
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/dojo/dijit/themes/tundra/tundra.css"> 
+    <link rel="stylesheet" href="http://js.arcgis.com/3.7/js/esri/css/esri.css">
+
+    
+    <style>
+      html, body { height: 100%; width: 100%; margin: 0; padding: 0; }
+      #map{ margin: 0; padding: 0}
+      #feedback {
+        position: absolute;
+        /*height: 250px;*/
+        font-family: Verdana, sans-serif;
+        margin: 5px;
+        padding: 4px;
+        z-index: 40;
+        background: #fff;
+        color: #444;
+        width: 200px;
+        left: 5px;
+        top: 5px;
+        -moz-box-shadow: 0 0 5px #888;
+        -webkit-box-shadow: 0 0 5px #888;
+        box-shadow: 0 0 5px #888;
+        font-size: 75%;
+        }
+
+      #county { 
+        padding: 5px 0 0 0;
+        font-weight: 700;
+      }
+      #legendWrapper { padding: 0 0 0 0; }
+      #fieldWrapper { font-family: Verdana, sans-serif; font-size: 75%;  }
+      #note { font-size: 80%; font-weight: 700; padding: 0 0 10px 0; }
+      h3 { margin: 0 0 5px 0; border-bottom: 1px solid #444; }
+      #HomeButton {
+            position: absolute;
+            top: 95px;
+            right: 20px;
+            z-index: 50;
+      }
+    </style>
+    <script src="js/mapSettings.js"></script>
+    <!--<script src="http://archive.knoxmpc.org/temp/indicators/js/mapSettings.js"></script>-->
+    <script src="http://js.arcgis.com/3.7/"></script>
+
+    <script>
+
+
+        function gup(name) {
+            //code stolen from http://stackoverflow.com/questions/8460265/get-a-variable-from-url-parameter-using-javascript
+            name = name.replace(/[\[]/, "\\\[").replace(/[\]]/, "\\\]");
+            var regexS = "[\\?&]" + name + "=([^&#]*)";
+            var regex = new RegExp(regexS);
+            var results = regex.exec(window.location.href);
+            if (results == null)
+                return "";
+            else
+                return results[1];
+        }
+        // one global for persistent app variables
+        var app = {};
+
+        //This sets the map to display -- grabs the map variable that's passed via URL/GET method
+        //app.mapName = "0101_Population";
+        app.mapName = gup('map');
+        app.currentAttribute = gup('attribute');
+
+        require([
+          "esri/map", "esri/layers/WebTiledLayer",
+          "esri/layers/FeatureLayer", "esri/SpatialReference", 
+          "esri/tasks/ClassBreaksDefinition", "esri/tasks/AlgorithmicColorRamp", "esri/geometry/Extent", "esri/renderers/SimpleRenderer",
+          "esri/tasks/GenerateRendererParameters", "esri/tasks/GenerateRendererTask", "esri/dijit/InfoWindow",
+          "esri/symbols/SimpleLineSymbol", "esri/symbols/SimpleFillSymbol", "esri/dijit/Popup", "esri/dijit/HomeButton",
+          "esri/dijit/Legend", //"esri/dijit/PopupTemplate"
+          "dojo/parser", "dojo/_base/array", "dojo/_base/Color", "esri/symbols/TextSymbol", "esri/layers/LabelLayer",
+          "dojo/dom", "dojo/dom-construct", "dojo/number",
+          "dojo/data/ItemFileReadStore", "dijit/form/FilteringSelect", "dijit/TitlePane",
+          "dijit/layout/BorderContainer", "dijit/layout/ContentPane",
+          "dojo/domReady!"
+        ], function (
+          Map, WebTiledLayer,
+          FeatureLayer, SpatialReference, 
+          ClassBreaksDefinition, AlgorithmicColorRamp, Extent, SimpleRenderer,
+          GenerateRendererParameters, GenerateRendererTask, InfoWindow,
+          SimpleLineSymbol, SimpleFillSymbol, Popup, HomeButton,
+          Legend, //PopupTemplate
+          parser, arrayUtils, Color, TextSymbol, LabelLayer,
+          dom, domConstruct, number,
+          ItemFileReadStore, FilteringSelect, TitlePane
+        ) {
+            parser.parse();
+
+
+
+            //set the inition map extent.  user can zoom out if desired
+            var bounds = new Extent({
+                "xmin": -9457529,
+                "ymin": 4192455,
+                "xmax": -9248092,
+                "ymax": 4360617,
+                "spatialReference": { "wkid": 102100 }
+            });
+            
+            app.currentLayer = "counties"; // set the counties as the initial map layer
+            app.layerChangeThreshold = 600000; //this is the scale that will trigger a map refresh
+            // the counties map service uses the actual field name as the field alias
+            // set up an object to use as a lookup table to convert from terse field
+            // names to more user friendly field names
+            app.fields = getAppFields(app.mapName);
+
+            app.popup = Popup({
+                titleInBody: false
+            }, domConstruct.create("div"));
+
+            app.map = new Map("map", {
+                extent: bounds,
+                slider: true,
+                sliderPosition: "top-right", //this is the plus and minus buttons - not an actual slider control 
+                logo: false, //hide the ESRI logo from the bottom right corner of the map
+                infoWindow: app.popup
+            });
+
+            var home = new HomeButton({
+                map: app.map
+            }, "HomeButton");
+            //home.extent = bounds;
+            home.startup();
+
+            //set the initial max allowable offset for the layers -- this performs Douglas Peucker algorithm (reduce verticies)
+            var initOffSet;
+            initOffset = maxOffset();
+            console.log("initOffSet: ", initOffset);
+
+            
+            app.tractsUrl = getTractsURL(app.mapName); // get the feature service URL for the tracts
+            app.countiesUrl = getCountiesURL(app.mapName); // get the feature service URL for the counties
+
+            app.outFields = getOutFields(app.mapName); // list the output fields needed for the drop down
+            if (app.currentAttribute == null || app.currentAttribute == '') {
+                //the current attribute to display was NOT set by a URL parameter.  
+                //grab the default attribute from mapSettings.js
+                app.currentAttribute = getCurrentAttribute(app.mapName); // set the default variable/field to display when the map loads
+            }
+            app.curAttrDataType = app.fields[app.currentAttribute][1]; //get the data type for the default field above
+         
+            document.getElementById("titleField").innerHTML = "   " + app.fields[app.currentAttribute][0] + "<br>";
+            //this array sets the formating for two variables shown in the pop up
+            //first element is the map layer being displayed that's currently being fed into the renderer and the legend
+            //second element contains the label for the second variable followed by the field to get the data from
+            app.popFormat = getPopFormat(app.mapName);
+
+
+            // create the counties feature layer 
+            app.counties = new FeatureLayer(app.countiesUrl, {
+                "id": "counties",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": ["*"],
+                "opacity": 0.5,
+                "maxScale": app.layerChangeThreshold
+            });
+            app.counties.setMaxAllowableOffset(initOffset); // set max allowable offset
+            console.log("init from counties:", app.counties.getMaxAllowableOffset());
+
+            // create the counties OUTLINES feature layer 
+            app.countyOutlines = new FeatureLayer(app.countiesUrl, {
+                "id": "countyOutlines",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "minScale": app.layerChangeThreshold,
+                "outFields": ["*"]
+            });
+            app.countyOutlines.setMaxAllowableOffset(initOffset); // set max allowable offset
+            var outline = new esri.symbol.SimpleLineSymbol()
+                  .setColor(dojo.Color(0, 0, 0))
+                  .setWidth(2);
+            app.sym = new esri.symbol.SimpleFillSymbol()
+                  .setOutline(outline)
+                  .setColor(dojo.Color(0, 0, 0, 0));
+            var outlineRenderer = new esri.renderer.SimpleRenderer(app.sym);
+            app.countyOutlines.setRenderer(outlineRenderer);
+            app.countyOutlines.disableMouseEvents(); //don't do anything with this layer when the user clicks on it
+
+
+            // create the tracts feature layer 
+            app.tracts = new FeatureLayer(app.tractsUrl, {
+                "id": "tracts",
+                "mode": FeatureLayer.MODE_ONDEMAND,
+                "outFields": ["*"],
+                "opacity": 0.5,
+                "minScale": app.layerChangeThreshold
+            });
+            app.tracts.setMaxAllowableOffset(initOffset); // set max allowable offset
+            console.log("init from counties:", app.counties.getMaxAllowableOffset());
+
+
+            // show selected COUNTY attribute on click
+            app.mapClick = app.counties.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+
+            //// show selected COUNTYOUTLINES attribute on click
+            //app.mapClick = app.countyOutlines.on("click", function (evt) {
+            //    formatInfoWindow(evt);
+            //});
+
+            // show selected TRACT attribute on click
+            app.mapClick = app.tracts.on("click", function (evt) {
+                formatInfoWindow(evt);
+            });
+
+            function formatInfoWindow(evt) {
+                if (app.currentLayer == 'counties') {
+                    var name = evt.graphic.attributes.NAME;
+                    name = name + " County";
+                } else {
+                    var tract = evt.graphic.attributes.TRACT;
+                    name = "Tract: " + tract;
+                }
+                var ca = app.currentAttribute,
+                    content, primaryNum;
+                
+                //primaryNum is the field that's in the dropdown box, symbology and legend
+                primaryNum = evt.graphic.attributes[ca];
+                // format primaryNum
+                primaryNum = AZnumberformat2(primaryNum, app.curAttrDataType);
+
+
+                var content;
+                content = ""; //excluding this will cause the word "undefined" to be appended to front of content string.
+
+                //this is the secondary statistic to show in the popup or format percent vacant by year.
+                var thisPopFormat = app.popFormat[ca];
+                //The code below was needed when we used the USPS vacancy data.  We've gone back to using ACS data
+                //This code is being retained in case we go back to using USPS
+                /*if (app.mapName == "0701_HousingStock") {
+                    //this generates the percent vacant by year
+                    content = "Percent of Vacant Housing Units by Year<br>";
+                    var j = 2008; var thisYear; var yearAsString;
+                    for (j = 2008; j < 2016; j++) {
+                        //loop through the years 
+                        thisYear = "Year" + j;
+                        yearAsString = j.toString()
+                        content = content + yearAsString + ": " + AZnumberformat2(evt.graphic.attributes[thisYear], app.curAttrDataType) + "<br>";
+                    }
+                */
+                if (thisPopFormat == null || thisPopFormat == "<No Secondary>") {
+                    //we aren't displaying two fields for this variable, just one
+                    content = app.fields[ca][0] + ": " + primaryNum;
+                } else {
+                    //we are displaying two fields in this popup
+                    //format the second number
+                    var secondaryNum = AZnumberformat2(evt.graphic.attributes[thisPopFormat[1]], thisPopFormat[2]);
+                    //build the popup content
+                    contentStart = thisPopFormat[0] + ": " + secondaryNum + "<br>"; //first line of content
+                    content = contentStart + app.fields[ca][0] + ": " + primaryNum; //second line of content                     
+                }
+
+                app.popup.setFeatures([evt.graphic]);
+                app.popup.setTitle(name);
+                app.popup.setContent(content);
+
+                // show info window at correct location based on the event's properties
+                (evt) ? app.popup.show(evt.screenPoint, app.map.getInfoWindowAnchor(evt.screenPoint)) : null;
+            }
+
+
+            var mbSubdomains = ["a", "b", "c"];
+            app.mapBox = new WebTiledLayer("http://${subDomain}.tiles.mapbox.com/v4/knoxmpc.h9a24l3i/{level}/{col}/{row}.png?access_token=<enter your MapBox key>", {
+                "subDomains": mbSubdomains,
+                "id": "toner-lines",
+                //"maxScale": app.layerChangeThreshold,
+            });
+
+            //add county labels
+            // create a text symbol to define the style of labels
+            var cntyLabel = new TextSymbol().setColor([255, 255, 255]);
+            cntyLabel.font.setSize("15pt");
+            cntyLabel.font.setFamily("Verdana");
+            cntyLabel.font.setWeight(cntyLabel.WEIGHT_BOLD);
+            cntyLabelRenderer = new SimpleRenderer(cntyLabel);
+            var labels = new LabelLayer({ id: "labels" });
+            // tell the label layer to label the countries feature layer 
+            var labelField = "NAME";
+            labels.addFeatureLayer(app.counties, cntyLabelRenderer, "${" + labelField + "}");
+             //add the label layer to the map in the next block
+
+            //add label shadow
+            var shadowLabel = new TextSymbol().setColor([0, 0, 0]);
+            shadowLabel.setOffset(1, -1);
+            shadowLabel.font.setSize("15pt");
+            shadowLabel.font.setFamily("Verdana");
+
+            shadowLabel.font.setWeight(shadowLabel.WEIGHT_BOLD);
+            shadowLabelRenderer = new SimpleRenderer(shadowLabel);
+            var shadowLabels = new LabelLayer({ id: "shadowLabels" });
+            shadowLabels.addFeatureLayer(app.counties, shadowLabelRenderer, "${" + labelField + "}");
+
+            app.map.addLayer(app.mapBox);
+            app.map.addLayer(app.counties);
+            app.map.addLayer(shadowLabels);
+            app.map.addLayer(labels);
+            app.map.addLayer(app.tracts);
+            app.map.addLayer(app.countyOutlines);
+            
+
+            // colors for the renderer
+            app.defaultFrom = Color.fromHex("#FFFF80");
+            app.defaultTo = Color.fromHex("#0D0F78");
+
+            createRenderer(app.currentAttribute);
+
+            //add map zoom end - updates the Max Off Set
+            app.map.on("zoom-end", ScaleChanged);
+
+            // create a store and a filtering select for the county layer's fields
+            var fieldNames, fieldStore, fieldSelect;
+            fieldNames = { "identifier": "value", "label": "name", "items": [] };
+            arrayUtils.forEach(app.outFields, function (f) {
+                // exclude attrs that contain "NAME"
+                var i = arrayUtils.indexOf("NAME");
+                if (f.indexOf("NAME") == -1) {
+                    console.log("adding", app.fields[f][0]);
+                    fieldNames.items.push({ "name": app.fields[f][0], "value": f });
+                }
+            });
+
+            fieldStore = new ItemFileReadStore({ data: fieldNames });
+            fieldSelect = new FilteringSelect({
+                displayedValue: fieldNames.items[0].name,
+                value: app.currentAttribute,
+                name: "fieldsFS",
+                required: false,
+                store: fieldStore,
+                searchAttr: "name",
+                // this sets the style for 'title' of the drop down box, but not the invidiual items when clicked on
+                style: { "width": "170px", "fontSize": "8pt", "color": "#444" }
+            }, domConstruct.create("div", null, dom.byId("fieldWrapper")));
+            fieldSelect.on("change", updateAttribute);
+
+            
+
+            function createRenderer(field) {
+                app.sfs = new SimpleFillSymbol(
+                  SimpleFillSymbol.STYLE_SOLID,
+                  new SimpleLineSymbol(
+                    SimpleLineSymbol.STYLE_SOLID,
+                    new Color([255, 255, 255]),
+                    1.2
+                  ),
+                  null
+                );
+                var classDef = new ClassBreaksDefinition();
+                classDef.classificationField = app.currentAttribute;
+
+                classDef.classificationMethod = "quantile";
+                classDef.breakCount = 6;
+                classDef.baseSymbol = app.sfs;
+
+                var colorRamp = new AlgorithmicColorRamp();
+                colorRamp.fromColor = app.defaultFrom;
+                colorRamp.toColor = app.defaultTo;
+                colorRamp.algorithm = "cie-lab"; // options are:  "cie-lab", "hsv", "lab-lch"
+                classDef.colorRamp = colorRamp;
+
+                var params = new GenerateRendererParameters();
+                params.classificationDefinition = classDef;
+                // limit the renderer to data being shown by the feature layer
+                if (app.currentLayer == "counties") {
+                    var generateRenderer = new GenerateRendererTask(app.countiesUrl);
+                } else {
+                    var generateRenderer = new GenerateRendererTask(app.tractsUrl);
+                }
+                generateRenderer.execute(params, applyRenderer, errorHandler);
+            }
+
+            function applyRenderer(renderer) {
+                var newRenderer = processRendererLabels(renderer);
+                if (app.currentLayer == "counties") {
+                    //app.counties.setRenderer(renderer);
+                    app.counties.setRenderer(newRenderer);
+                    app.counties.redraw();
+                    createLegend(app.map, app.counties);
+                } else {
+                    //app.tracts.setRenderer(renderer);
+                    app.tracts.setRenderer(newRenderer);
+                    app.tracts.redraw();
+                    createLegend(app.map, app.tracts);
+                }
+
+            }
+
+            function updateAttribute(ch) {
+                app.map.infoWindow.hide();
+                app.currentAttribute = ch;
+                app.curAttrDataType = app.fields[app.currentAttribute][1];
+                createRenderer(ch);
+                document.getElementById("titleField").innerHTML = "   " + app.fields[app.currentAttribute][0] + "<br>";
+                if (app.currentLayer == "counties") {
+                    createLegend(app.map, app.counties);
+                } else {
+                    createLegend(app.map, app.tracts);
+                }
+            }
+
+            function createLegend(map, fl) {
+                // destroy previous legend, if present
+                if (app.hasOwnProperty("legend")) {
+                    app.legend.destroy();
+                    domConstruct.destroy(dom.byId("legendDiv"));
+                }
+                // create a new div for the legend
+                var legendDiv = domConstruct.create("div", {
+                    id: "legendDiv"
+                }, dom.byId("legendWrapper"));
+
+                app.legend = new Legend({
+                    map: map,
+                    layerInfos: [{
+                        layer: fl,
+                        title: "."
+                    }]
+                }, legendDiv);
+                app.legend.startup();
+            }
+
+            function updateMaxOffset() {
+                var offset = maxOffset();
+                if (app.currentLayer == "counties") {
+                    app.counties.setMaxAllowableOffset(offset);
+                    console.log("counties.maxAllow: ", app.counties.getMaxAllowableOffset());
+                } else {
+                    app.tracts.setMaxAllowableOffset(offset);
+                    console.log("tracts.maxAllow: ", app.tracts.getMaxAllowableOffset());
+                }
+            }
+
+
+            function maxOffset() {
+                var extentWidth;
+                extentWidth = app.map.extent.getWidth();
+                //console.log("extentWidth: ",extentWidth);
+                myOffset = extentWidth / app.map.width;
+                // console.log("myOffset: ", myOffset);
+                myOffset = myOffset / 1;
+                return myOffset;
+            }
+
+            function ScaleChanged() {
+                var currentScale = app.map.getScale();
+                if (currentScale > app.layerChangeThreshold) {
+                    if (app.currentLayer != "counties") { app.layerChanged = true; } //trigger createRenderer below
+                    app.currentLayer = "counties";
+                } else {
+                    if (app.currentLayer != "tracts") { app.layerChanged = true; } //trigger createRenderer below
+                    app.currentLayer = "tracts";
+                }
+                console.log("currentScale: ", currentScale);
+                console.log("app.currentLayer: ", app.currentLayer);
+                updateMaxOffset();
+                if (app.layerChanged) {
+                    //the map switched from counties to tracts or vise versa.  update the renderer
+                    createRenderer(app.currentAttribute);
+                }
+            }
+
+            function processRendererLabels(renderer) {
+                //format the labels that have come out of the render
+                //this includes rounding, adding thousands comma seperator (123,456), adding percent sign
+                var myArray = new Array();
+                var myArray = renderer.infos;
+                //loop through each of the class breaks
+                myArray.forEach(function (item, idx) {
+                    var label = item.label; //this is the label of the class break in the form of 12.32562 - 18.5259
+                    var lblSplit = label.split("-"); //split on the hyphen
+                    var lowLabel = lblSplit[0].trim(); //first number (left of the hyphen.  Trim white space
+                    var lowLabelNum = Number(lowLabel); //convert it to a number 
+                    lowLabel = AZnumberformat2(lowLabelNum, app.curAttrDataType); //call the format function
+                    var newLabel;
+                    if (lblSplit.length == 1) {
+                        //there is only one number in the lable for this class.  For example, Percent_other 
+                        //only has "0" in the lowest class.  There's no "-" and therefore there's only 
+                        //one element in this array.  tyring to call lblSplit[1] throws an error and 
+                        //the map is not rendered and the legend disappears
+                        newLabel = lowLabel
+                    } else {
+                        //there are two numbers in the current class break label (e.g., 125 - 256)
+                        var highLabel = lblSplit[1].trim(); //the second number in the lable (right of the hyphen)
+                        highLabel = AZnumberformat2(Number(highLabel), app.curAttrDataType); //format it
+                        newLabel = lowLabel + " - " + highLabel; //concatenate the label
+                    }
+                    item.label = newLabel; //set the label in the renderer object
+                })
+                return renderer;
+            }
+
+            function AZnumberformat2(inNum, dataType) {
+                //number formatting.  
+                //number.format is a DoJo function so you're likely to step into DoJo code
+                        if (dataType == "INT") {
+                            //this is integer.  thousands will be seperated by commas (123,456)
+                            formattedNumber = number.format(inNum, { places: 0 });
+                        } else if (dataType == "DOL") {
+                            //this is dollar.  add "$" and thousand seperator
+                            formattedNumber = "$" + number.format(inNum, { places: 0 });
+                        } else if (dataType == "PER") {
+                            //this is percent.  round to one decimal place, add "%"
+                            formattedNumber = number.format(inNum, { places: 1 }) + "%";
+                        } else if (dataType == "DEC1") {
+                            //this is one decimal place
+                            formattedNumber = number.format(inNum, { places: 1 })
+                        }
+                        return formattedNumber;
+            }
+
+            function errorHandler(err) {
+                console.log('Oops, error: ', err);
+            }
+
+        });
+    </script>
+  
+<!--<style id="jsbin-css"> -->
+
+<!--</style>-->
+</head>
+  <body class="tundra">
+    <div id="titleField" style="font-family: UrbanoRegular; font-size: 18px; color: #505050; padding-bottom: 5px">myField</div>
+    <div data-dojo-type="dijit.layout.BorderContainer"
+         data-dojo-props="design:'headline',gutters:false"
+         style="width: 680px; height: 550px; margin: 0;">
+      <div id="map"
+           data-dojo-type="dijit.layout.ContentPane"
+           data-dojo-props="region:'center'">
+        <div style="width: 200px">
+        <div id="feedback" style="width:200px; font-size: 70%" data-dojo-type="dijit/TitlePane" data-dojo-props="title: 'Select Map To Display'" open="false">
+          <!-- <h3>Choose Demographic Variable</h3> -->
+
+            <div id="fieldWrapper" style ="font-size: 70%; font-family: Verdana, sans-serif" >
+          <!--Currently selected attribute: -->
+          </div>
+
+          <div id="legendWrapper" style ="font-size: 100%; font-family: Verdana, sans-serif"></div>
+        </div>
+        </div>
+          <div id="HomeButton"></div>
+      </div>
+    </div>
+    <div class="clickmap">Click map to view data</div>
+
+
+</body>
+</html>
